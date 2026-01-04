@@ -1,0 +1,89 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+ENV/
+env/
+
+# =========================
+# uv / pip
+# =========================
+.uv/
+uv.lock
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs & runtime artifacts
+# =========================
+*.log
+logs/
+*.out
+*.err
+
+# =========================
+# Jupyter / Notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Testing / Coverage
+# =========================
+.coverage
+coverage/
+htmlcov/
+.pytest_cache/
+
+# =========================
+# Build / Distribution
+# =========================
+build/
+dist/
+wheelhouse/
+
+# =========================
+# LangChain / Deep Research specific
+# =========================
+langgraph.db
+langgraph.sqlite
+*.sqlite
+*.db
+
+# =========================
+# Model / cache artifacts
+# =========================
+.cache/
+.cache_langchain/
+.cache_langgraph/
