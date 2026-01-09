@@ -18,9 +18,25 @@ DEFAULT_REPORT_STRUCTURE = """Use this structure to create a report on the user-
    - Provide a concise summary of the report"""
 
 
+# DEFAULT_REPORT_STRUCTURE = """이 구조를 사용하여 사용자가 제공한 주제에 대한 보고서를 작성하세요:
+
+# 1. 서론 (연구 필요 없음)
+#    - 주제 영역에 대한 간략한 개요
+
+# 2. 본문 섹션들:
+#    - 각 섹션은 사용자가 제공한 주제의 하위 주제에 초점을 맞춰야 합니다
+   
+# 3. 결론
+#    - 본문 섹션들을 정리하는 1개의 구조적 요소(목록 또는 표)를 목표로 합니다
+#    - 보고서의 간결한 요약을 제공합니다"""
+
+
+
+
 class SearchAPI(Enum):
     TAVILY = 'tavily'
-    ARXIV = 'arxiv'
+    ARXIV = 'arxiv'     # 논문 검색
+    PUBMED = "pubmed"   # 의학 논문 검색
     DUCKDUCKGO = 'duckduckgo'
     GOOGLE_SEARCH = 'google_search'
     NONE = 'none'
@@ -34,7 +50,7 @@ class Configuration:
     # Common configuration
     report_structure: str = DEFAULT_REPORT_STRUCTURE
     search_api: SearchAPI = SearchAPI.TAVILY
-    search_api_config: Optional[Dict[str, Any]] = None                                  # Optional: 값이 있을수도 없을수도 있음, Dict[str, Any]: 키는 문자열, 값은 아무거나
+    search_api_config: Optional[Dict[str, Any]] = None         # Optional: 값이 있을수도 있고 None 일수도 있음, Dict[str, any] : key는 문자열, value는 아무거나                          # Optional: 값이 있을수도 없을수도 있음, Dict[str, Any]: 키는 문자열, 값은 아무거나
     process_search_results: Literal["summarize", "split_and_rerank"] | None = None      # Literal: 고정된 값들 중 하나만 가질 수 있음 
     
     # 요약 모델 설정 
