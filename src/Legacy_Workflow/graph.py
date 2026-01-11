@@ -218,7 +218,7 @@ def human_feedback(state: ReportState, config: RunnableConfig) -> Command[Litera
 
 async def generate_queries(state: SectionState, config: RunnableConfig):
     """
-    특정 섹션을 조사(리서치)하기 위한 검색 쿼리를 생성한다.
+    특정 섹션을 리서치하기 위한 검색 쿼리를 생성.
 
     이 노드는 LLM을 사용하여  
     섹션의 주제와 설명을 기반으로 목표 지향적인(정밀한) 검색 쿼리를 생성한다.
@@ -263,7 +263,7 @@ async def generate_queries(state: SectionState, config: RunnableConfig):
     return {'search_queries': queries.queries}
 
 async def search_web(state: SectionState, config: RunnableConfig):
-    """섹션 쿼리에 대한 웹 검색을 실행한다.
+    """섹션별(본문1, 본문2 등) 웹 검색을 실행.
     
     이 노드는:
     1. 생성된 쿼리들을 가져온다
@@ -297,7 +297,7 @@ async def search_web(state: SectionState, config: RunnableConfig):
 
 
 async def write_section(state: SectionState, config: RunnableConfig) -> Command[Literal[END, "search_web"]]:
-    """보고서의 섹션을 작성하고 추가 리서치가 필요한지 평가한다.
+    """보고서의 섹션을 작성하고 추가 리서치가 필요한지 평가.
     
     이 노드는:
     1. 검색 결과를 사용하여 섹션 내용을 작성한다
