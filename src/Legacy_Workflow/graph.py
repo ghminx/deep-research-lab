@@ -1,34 +1,56 @@
+from rich import print
+from rich.console import Console
+from rich.panel import Panel
 
-from rich import print 
+
+
+
+import asyncio
+
+from typing import Literal
+
+
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain.messages import SystemMessage, HumanMessage
-from langchain_core.messages import SystemMessage, HumanMessage
 
+from langgraph.constants import Send
+from langgraph.graph import START, END, StateGraph
+from langgraph.types import interrupt, Command
 
 from src.Legacy_Workflow.state import (
+    ReportState,
     ReportStateInput,
+    ReportStateOutput,
+    
+    SectionState,
     
     Queries,
+    Sections,
+    Section,
     
     
 )
 
 from src.Legacy_Workflow.prompts import (
     report_planner_query_writer_instructions,
+    report_planner_instructions,
+    query_writer_instructions,
 )
 
 
 from src.Legacy_Workflow.utils import (
     get_search_params,
     get_today,
+    run_search
 )
 
 from src.Legacy_Workflow.config import Configuration
 
 
+console = Console()
 
-async def generate_report_plan(state: ReportStateInput, config: RunnableConfig):
+async def generate_report_plan(state: ReportState, config: RunnableConfig):
     """섹션들로 구성된 보고서 계획을 생성하는 노드 
     
     1. 보고서 구조와 파라미터 설정을 가져옴 
@@ -47,16 +69,17 @@ async def generate_report_plan(state: ReportStateInput, config: RunnableConfig):
     # 입력값 - 주제 
     topic = state["topic"]
     
+    console.print(Panel(f"[bold blue]주제: {topic}[/bold blue]", title="📋 보고서 계획 생성"))
     
     ### human_feedback 노드에서 사용자가 계획을 거부하고 피드백을 줬을 때 사용 
-    
+
     # 보고서 계획에 대한 피드백 리스트 가져오기
     feedback_list = state.get("feedback_on_report_plan", [])
 
     # 피드백을 하나의 문자열로 합치기
     feedback = " /// ".join(feedback_list) if feedback_list else ""
     
-    
+
     # 설정값 가져오기 
     configurable = Configuration.from_runnable_config(config)
     report_structure = configurable.report_structure
@@ -66,7 +89,7 @@ async def generate_report_plan(state: ReportStateInput, config: RunnableConfig):
     web_param_filter = get_search_params(search_api, search_api_config)
     
 
-    # writer model 설정 
+    # 검색 쿼리 생성용 LLM 정의
     writer_provider = configurable.writer_provider
     writer_model_name = configurable.writer_model
     writer_model_kwargs = configurable.writer_model_kwargs or {}
@@ -83,76 +106,226 @@ async def generate_report_plan(state: ReportStateInput, config: RunnableConfig):
     )
 
     # 검색 쿼리 생성
-    results = await structured_llm.ainvoke([SystemMessage(content=search_query_prompt),
-                                     HumanMessage(content="Generate search queries that will help with planning the sections of the report.")])
+    search_message = "Generate search queries that will help with planning the sections of the report."
     
-    query_list = [query.search_query for query in result.queries]
+    results = await structured_llm.ainvoke([SystemMessage(content=search_query_prompt),
+                                    HumanMessage(content=search_message)])
+    query_list = [query.search_query for query in results.queries]
+    
+    # 보고서 계획을 위한 웹 검색 수행
+    web_source = await run_search(search_api, query_list, web_param_filter)
 
 
-    # 웹 검색 실행 
+    # 섹션 계획 생성용 LLM 정의
+    planner_provider = configurable.planner_provider
+    planner_model_name= configurable.planner_model
+    planner_model_kwargs = configurable.planner_model_kwargs or {}
+    planner_llm = init_chat_model(model=planner_model_name, model_provider=planner_provider, max_tokens = 10000, model_kwargs=planner_model_kwargs)
+    structured_llm = planner_llm.with_structured_output(Sections)
+    
+    # 보고서 섹션 계획 생성 프롬프트 포맷팅
+    system_instructions_sections = report_planner_instructions.format(
+        topic=topic, 
+        report_organization=report_structure, 
+        context=web_source, 
+        feedback=feedback
+    )
+    
+    # 보고서 섹션 계획 생성 
+    planner_message = """Generate the sections of the report. Your response must include a 'sections' field containing a list of sections. 
+                        Each section must have: name, description, research, and content fields."""
+    report_sections = await structured_llm.ainvoke([SystemMessage(content=system_instructions_sections),
+                                             HumanMessage(content=planner_message)])
 
-from typing import Literal, List
-from tavily import AsyncTavilyClient
-import asyncio
+    sections = report_sections.sections
+    
+    return {"sections": sections}
 
-async def tavily_search_async(search_queries, max_results: int = 1, topic: Literal["general", "news", "finance"] = "general", include_raw_content: bool = True):
-    """
-    Performs concurrent web searches with the Tavily API
+
+# 휴먼 피드백 
+# Command:  LangGraph에서 노드의 다음 행동을 지시하는 객체
+def human_feedback(state: ReportState, config: RunnableConfig) -> Command[Literal["generate_report_plan","build_section_with_web_research"]]:
+    """보고서 계획에 대한 사용자 피드백을 받고 다음 단계로 라우팅
+
+    이 노드의 역할:
+    1. 현재 보고서 계획을 사용자가 검토할 수 있게 포맷팅
+    2. interrupt를 통해 피드백 받음
+    3. 다음 중 하나로 라우팅:
+    - 승인 → 섹션 작성으로 이동
+    - 피드백 제공 → 계획 재생성으로 이동
 
     Args:
-        search_queries (List[str]): List of search queries to process
-        max_results (int): Maximum number of results to return
-        topic (Literal["general", "news", "finance"]): Topic to filter results by
-        include_raw_content (bool): Whether to include raw content in the results
+        state: 검토할 섹션들이 담긴 그래프 상태
+        config: 워크플로우 설정
+        
+    Returns:
+        계획 재생성 또는 섹션 작성을 시작하는 Command
+    """
+
+    # sections 가져오기 
+    topic = state["topic"]
+    sections = state["sections"]
+    
+
+    section_list = []
+
+    for section in sections:
+        text = f"Section: {section.name}\n"
+        text += f"Description: {section.description}\n"
+        text += f"Research needed: {'Yes' if section.research else 'No'}"
+        
+        section_list.append(text)
+        
+    sections_str = '\n\n'.join(section_list)
+
+    # 인터럽트에서 보고서 계획에 대한 피드백 받기
+    interrupt_message = f"""
+    출력된 보고서 작성 계획을 검토해주세요. 
+                        
+    \n\n{sections_str}\n\n
+
+
+    출력된 보고서 작성 계획을 승인하려면 'true'를 입력하세요.
+    수정이 필요하면 피드백을 입력하세요:"
+    """
+    
+    feedback = interrupt(interrupt_message)
+    
+    # 사용자가 보고서 계획 승인 여부 확인
+    if isinstance(feedback, bool) and feedback is True:
+        
+        send_list = []
+        for s in sections:
+            if s.research:    
+                send_list.append(
+                    Send("build_section_with_web_research",      # Send("node_name", {"key": "value"})
+                            {
+                            "topic": topic,
+                            "section": s,
+                            "search_iterations": 0  # 검색 반복 횟수 초기값
+                            }
+                        ))
+                
+        return Command(goto=send_list)
+    
+    # 사용자가 피드백을 입력한 경우 generate_report_plan 노드로 이동
+    elif isinstance(feedback, str):
+        return Command(goto="generate_report_plan", 
+                       update={"feedback_on_report_plan": [feedback]})  # feedback_on_report_plan 상태를 업데이트
+    else:
+        raise TypeError(f"{type(feedback)}의 형식은 지원하지 않습니다. 문자열로 된 피드백이나 'true'를 입력해주세요.")
+
+
+async def generate_queries(state: SectionState, config: RunnableConfig):
+    """
+    특정 섹션을 조사(리서치)하기 위한 검색 쿼리를 생성한다.
+
+    이 노드는 LLM을 사용하여  
+    섹션의 주제와 설명을 기반으로 목표 지향적인(정밀한) 검색 쿼리를 생성한다.
+
+    Args:
+        state: 섹션에 대한 정보가 들어 있는 현재 상태
+        config: 생성할 검색 쿼리 개수를 포함한 설정 정보
 
     Returns:
-            List[dict]: List of search responses from Tavily API:
-                {
-                    'query': str,
-                    'follow_up_questions': None,      
-                    'answer': None,
-                    'images': list,
-                    'results': [                     # List of search results
-                        {
-                            'title': str,            # Title of the webpage
-                            'url': str,              # URL of the result
-                            'content': str,          # Summary/snippet of content
-                            'score': float,          # Relevance score
-                            'raw_content': str|None  # Full page content if available
-                        },
-                        ...
-                    ]
-                }
+        생성된 검색 쿼리를 담은 Dict(딕셔너리)
+    """    
+    
+    # state 값들 가져오기
+    topic = state["topic"]
+    section = state["section"]
+    
+    # 설정값 가져오기
+    configuration = Configuration.from_runnable_config(config)
+    number_of_queries = configuration.number_of_queries
+
+    # 검색 쿼리 생성용 LLM 정의
+    writer_provider = configuration.writer_provider
+    writer_model_name = configuration.writer_model
+    writer_model_kwargs = configuration.writer_model_kwargs or {}
+    writer_model = init_chat_model(model=writer_model_name, model_provider=writer_provider, model_kwargs=writer_model_kwargs)
+    structured_llm = writer_model.with_structured_output(Queries)  # 구조화된 출력 형태 지정    
+    
+    # 검색 쿼리 생성 프롬프트
+    system_instructions = query_writer_instructions.format(
+        topic=topic,
+        section_topic = section.description,
+        number_of_queries=number_of_queries,
+        today = get_today()
+    )
+    
+    
+    # 검색 쿼리 생성
+    search_message = "Generate search queries on the provided topic."
+    queries = await structured_llm.ainvoke([SystemMessage(content=system_instructions),
+                                    HumanMessage(content=search_message)])
+
+    return {'search_queries': queries.queries}
+
+async def search_web(state: SectionState, config: RunnableConfig):
+    """섹션 쿼리에 대한 웹 검색을 실행한다.
+    
+    이 노드는:
+    1. 생성된 쿼리들을 가져온다
+    2. 설정된 검색 API를 사용하여 검색을 실행한다
+    3. 결과를 사용 가능한 컨텍스트로 포맷팅한다
+    
+    Args:
+        state: 검색 쿼리가 포함된 현재 상태
+        config: 검색 API 설정
+        
+    Returns:
+        검색 결과와 업데이트된 반복 횟수를 담은 Dict
     """
-    tavily_async_client = AsyncTavilyClient()
-    search_tasks = []
-    for query in search_queries:
-            search_tasks.append(
-                tavily_async_client.search(
-                    query,
-                    max_results=max_results,
-                    include_raw_content=include_raw_content,
-                    topic=topic
-                )
-            )
+    
+    # state 가져오기 
+    search_queries = state['search_queries']
+    
+    # 설정값 가져오기
+    configuration = Configuration.from_runnable_config(config)
+    search_api = configuration.search_api
+    search_api_config = configuration.search_api_config or {}
+    web_param_filter = get_search_params(search_api, search_api_config)
 
-    # Execute all searches concurrently
-    search_docs = await asyncio.gather(*search_tasks)
-    return search_docs
-
-
-queries = ["에스티이노베이션 회사에 대해서"]
-result = asyncio.run(tavily_search_async(queries))
+    # Pydantic 모델에서 쿼리 문자열 리스트로 변환
+    query_list = [query.search_query for query in search_queries]
+    
+    # 웹 검색 실행 
+    web_source = await run_search(search_api, query_list, web_param_filter)
+    
+    return {"source_str": web_source, "search_iterations": state["search_iterations"] + 1}
 
 
-from rich import print
-
-formatted_output = f"Search results: \n\n"
-
-# Deduplicate results by URL
-unique_results = {}
-for response in result:
-    for result in response['results']:
+async def write_section(state: SectionState, config: RunnableConfig) -> Command[Literal[END, "search_web"]]:
+    """보고서의 섹션을 작성하고 추가 리서치가 필요한지 평가한다.
+    
+    이 노드는:
+    1. 검색 결과를 사용하여 섹션 내용을 작성한다
+    2. 섹션의 품질을 평가한다
+    3. 다음 중 하나를 수행한다:
+       - 품질이 통과하면 섹션을 완료한다
+       - 품질이 실패하면 추가 리서치를 트리거한다
+    
+    Args:
+        state: 검색 결과와 섹션 정보가 포함된 현재 상태
+        config: 작성 및 평가를 위한 설정
         
-        print(result)
-        
+    Returns:
+        섹션 완료 또는 추가 리서치를 위한 Command
+    """
+
+
+
+    
+# builder = StateGraph(ReportState, input=ReportStateInput, output=ReportStateOutput, config_schema=Configuration)
+# builder.add_node("generate_report_plan", generate_report_plan)
+# builder.add_node("human_feedback", human_feedback)
+
+
+# # Add edges
+# builder.add_edge(START, "generate_report_plan")
+# builder.add_edge("generate_report_plan", "human_feedback")
+
+# graph = builder.compile()
+
+
