@@ -272,6 +272,7 @@ async def generate_queries(state: SectionState, config: RunnableConfig):
     queries = await structured_llm.ainvoke([SystemMessage(content=system_instructions),
                                     HumanMessage(content=search_message)])
 
+    print(Panel(f"[bold green]생성된 검색 쿼리:[/bold green]\n" + "\n".join([f"- {q.search_query}" for q in queries.queries]), title="🔍 검색 쿼리 생성"))
     return {'search_queries': queries.queries}
 
 async def search_web(state: SectionState, config: RunnableConfig):
@@ -484,6 +485,107 @@ async def write_final_sections(state: SectionState, config: RunnableConfig):
 
     return {"completed_sections": [section]}
 
+def compile_final_report(state: ReportState, config: RunnableConfig):
+    """
+    모든 섹션을 하나의 최종 보고서로 통합
+
+    이 노드는 다음 작업을 수행
+    1. 완료된 모든 섹션을 가져옴
+    2. 원래 계획된 순서에 맞게 정렬
+    3. 이를 결합하여 최종 보고서를 생성
+
+    Args:
+        state: 모든 완료된 섹션을 포함한 현재 상태
+
+    Returns:
+        Dict containing the complete report
+    """
+
+    # 설정 값 가져오기
+    configurable = Configuration.from_runnable_config(config)
+
+    # 섹션 가져오기
+    sections = state["sections"]
+    
+    # 작성 완료된 섹션을 딕셔너리로 매핑(순서가 섞여있음)
+    completed_sections = {s.name: s.content for s in state["completed_sections"]}
+
+    # 순서가 섞여있는 섹션들을 원래 계획된 순서로 재정렬 및 내용 업데이트
+    for section in sections:
+        section.content = completed_sections[section.name]
+
+    # 최종 섹션들을 하나의 보고서로 결합
+    all_sections = "\n\n".join([s.content for s in sections])
+
+    if configurable.include_source_str:
+        return {"final_report": all_sections, "source_str": state["source_str"]}
+    else:
+        return {"final_report": all_sections}
+
+# from rich import print 
+
+# sections = [
+#     # [순서 1] 서론 (연구 불필요)
+#     Section(
+#         name="서론",
+#         description="AI 기술 동향 보고서의 개요 및 주제 소개",
+#         research=False,
+#         content=''  # <--- 여기가 비어있습니다! (아직 안 합쳤으니까)
+#     ),
+
+#     # [순서 2] 생성형 AI의 발전 (연구 필요)
+#     Section(
+#         name="생성형 AI의 발전",
+#         description="ChatGPT, Claude 등 생성형 AI 모델의 최신 동향",
+#         research=True,
+#         content=''  # <--- 작업자가 내용은 만들었지만(completed), 여긴 아직 빈칸입니다.
+#     ),
+
+#     # [순서 3] AI 규제 현황 (연구 필요)
+#     Section(
+#         name="AI 규제 현황",
+#         description="각국의 AI 규제 정책 및 법안 현황",
+#         research=True,
+#         content=''  # <--- 역시 비어있습니다.
+#     ),
+
+#     # [순서 4] 결론 (연구 불필요)
+#     Section(
+#         name="결론",
+#         description="주요 발견사항 요약 및 향후 전망",
+#         research=False,
+#         content=''  # <--- 비어있습니다.
+#     )
+# ]
+
+# completed_sections = [
+#     Section(
+#         name="AI 규제 현황",
+#         description="각국의 AI 규제 정책 및 법안 현황",
+#         research=True,
+#         content="## AI 규제 현황\n\nEU는 AI Act를 통해 세계 최초의 포괄적 AI 규제를 시행합니다. 미국은 행정명령을 통해 AI 안전성 기준을 마련했으며, 한국도 AI 기본법 제정을 추진 중입니다.\n\n### Sources\n[1] EU AI Act: https://ec.europa.eu/ai-act"
+#     ),
+#     Section(
+#         name="서론",
+#         description="AI 기술 동향 보고서의 개요 및 주제 소개",
+#         research=False,
+#         content="# AI 기술 동향 보고서\n\n본 보고서는 2024년 AI 기술의 주요 발전 동향을 분석합니다. 생성형 AI의 급격한 발전과 각국의 규제 정책 변화를 중심으로 살펴봅니다."
+#     ),
+#     Section(
+#         name="결론",
+#         description="주요 발견사항 요약 및 향후 전망",
+#         research=False,
+#         content="## 결론\n\n생성형 AI는 빠르게 발전하고 있으며 각국의 규제도 본격화되고 있습니다.\n\n| 분야 | 현황 |\n|------|------|\n| 생성형 AI | GPT-4, Claude 3 출시 |\n| 규제 | EU AI Act 시행 |"
+#     ),
+#     Section(
+#         name="생성형 AI의 발전",
+#         description="ChatGPT, Claude 등 생성형 AI 모델의 최신 동향",
+#         research=True,
+#         content="## 생성형 AI의 발전\n\nOpenAI의 GPT-4와 Anthropic의 Claude 3는 2024년 가장 주목받는 AI 모델입니다. 멀티모달 기능과 추론 능력이 크게 향상되었습니다.\n\n### Sources\n[1] OpenAI Blog: https://openai.com/blog"
+#     )
+# ]
+
+  
 # 서브 그래프 정의     
 section_bulder = StateGraph(SectionState, output=SectionOutputState)
 section_bulder.add_node("generate_queries", generate_queries)
@@ -503,6 +605,7 @@ builder.add_node("human_feedback", human_feedback)
 builder.add_node("build_section_with_web_research", section_bulder.compile())
 builder.add_node("gather_completed_sections", gather_completed_sections)
 builder.add_node("write_final_sections", write_final_sections)
+builder.add_node("compile_final_report", compile_final_report)
 
 
 
@@ -511,8 +614,8 @@ builder.add_edge(START, "generate_report_plan")
 builder.add_edge("generate_report_plan", "human_feedback")
 builder.add_edge("build_section_with_web_research", "gather_completed_sections")
 builder.add_conditional_edges("gather_completed_sections", initiate_final_section_writing, ["write_final_sections"])
-
-
+builder.add_edge("write_final_sections", "compile_final_report")
+builder.add_edge("compile_final_report", END)
 
 
 
