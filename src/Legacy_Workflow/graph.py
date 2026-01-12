@@ -22,12 +22,13 @@ from src.Legacy_Workflow.state import (
     ReportState,
     ReportStateInput,
     ReportStateOutput,
-    
     SectionState,
+    Section,
+    SectionOutputState,
     
     Queries,
     Sections,
-    Section,
+    Feedback,
     
     
 )
@@ -36,13 +37,23 @@ from src.Legacy_Workflow.prompts import (
     report_planner_query_writer_instructions,
     report_planner_instructions,
     query_writer_instructions,
+    
+    section_writer_inputs,
+    section_writer_instructions,
+    
+    
+    section_grader_instructions,
+    
+    
+    final_section_writer_instructions
 )
 
 
 from src.Legacy_Workflow.utils import (
     get_search_params,
     get_today,
-    run_search
+    run_search,
+    format_sections,
 )
 
 from src.Legacy_Workflow.config import Configuration
@@ -59,7 +70,7 @@ async def generate_report_plan(state: ReportState, config: RunnableConfig):
     4. LLM을 통해 섹션(서론, 본론, 결론)들로 구성된 구조화된 계획을 생성 
 
     Args:
-        state (ReportStateInput): 그래프 상태(Topic) 
+        state (ReportState): 그래프 상태(Topic) 
         config (RunnableConfig): 모델, 검색 API등의 설정 정보 
         
     Returns:
@@ -139,6 +150,7 @@ async def generate_report_plan(state: ReportState, config: RunnableConfig):
 
     sections = report_sections.sections
     
+    # 노드의 출력값은 딕셔너리 형태여야 하고 state에 업데이트 됨 
     return {"sections": sections}
 
 
@@ -313,18 +325,196 @@ async def write_section(state: SectionState, config: RunnableConfig) -> Command[
     Returns:
         섹션 완료 또는 추가 리서치를 위한 Command
     """
-
-
-
     
-# builder = StateGraph(ReportState, input=ReportStateInput, output=ReportStateOutput, config_schema=Configuration)
-# builder.add_node("generate_report_plan", generate_report_plan)
-# builder.add_node("human_feedback", human_feedback)
+    # state 가져오기
+    topic = state["topic"]
+    section = state["section"]
+    source_str = state["source_str"]
+    
+    # 설정값 가져오기
+    configuration = Configuration.from_runnable_config(config)
+
+    # Section 작성 LLM 정의 
+    writer_model_name = configuration.writer_model
+    writer_provider = configuration.writer_provider
+    writer_model_kwargs = configuration.writer_model_kwargs or {}
+    writer_llm = init_chat_model(model=writer_model_name, model_provider=writer_provider, model_kwargs=writer_model_kwargs)
+    
+    # Section 작성 프롬프트
+    section_writer_prompt = section_writer_inputs.format(
+        topic=topic,
+        section_name = section.name,
+        section_topic = section.description,
+        context=source_str,
+        section_content=section.content
+    )   
+    
+    # Section 작성
+    section_content = await writer_llm.ainvoke([SystemMessage(content=section_writer_instructions),
+                                                HumanMessage(content=section_writer_prompt)])
+    
+    # 생성된 섹션 콘텐츠를 섹션에 필드에 업데이트 
+    section.content = section_content.content
+
+    # Section 평가 LLM 정의
+    grade_model_name = configuration.planner_model
+    grade_model_provider = configuration.planner_provider
+    grade_model_kwargs = configuration.planner_model_kwargs or {}
+    grade_model = init_chat_model(model=grade_model_name, model_provider=grade_model_provider, model_kwargs=grade_model_kwargs)
+    structured_llm = grade_model.with_structured_output(Feedback)
+
+    # Section 평가 프롬프트
+    section_grader_message = ("Grade the report and consider follow-up questions for missing information. "
+                              "If the grade is 'pass', return empty strings for all follow-up queries. "
+                              "If the grade is 'fail', provide specific search queries to gather missing information.")
+    
+    section_grader_prompt = section_grader_instructions.format(topic=topic, 
+                                                                               section_topic=section.description,
+                                                                               section=section.content, 
+                                                                               number_of_follow_up_queries=configuration.number_of_queries)
+
+    # Section 평가 
+    feedback = await structured_llm.ainvoke([SystemMessage(content=section_grader_prompt),
+                                             HumanMessage(content=section_grader_message)])
+    
+    # 평가 결과에 따라 다음 단계 결정
+    if feedback.grade == "pass" or state['search_iterations'] >= configuration.max_search_depth:
+        update = {"completed_sections": [section]}
+        
+        console.print(Panel(f"[green bold]평가 결과: pass[/green bold]"))
+        
+        if configuration.include_source_str:
+            update["source_str"] = state["source_str"]
+            
+        return Command(goto=END, update=update)
+    
+    else:
+        console.print(Panel(f"[green bold]재검색 필요: {feedback.grade}[/green bold]"))
+        
+        return Command(goto="search_web",
+                       update={"search_queries": feedback.follow_up_queries, "section": section})
+    
+def gather_completed_sections(state: ReportState):
+    """완료된 섹션들을 최종 섹션 작성을 위한 컨텍스트로 포맷팅
+
+    완료된 모든 리서치 섹션들을 가져와서 문자열로 포맷팅
+
+    Args:
+        state: 완료된 섹션들이 담긴 현재 상태
+        
+    Returns:
+        포맷팅된 섹션들을 컨텍스트로 담은 딕셔너리
+    """
+    
+    completed_sections = state["completed_sections"]
+    
+    completed_report_sections = format_sections(completed_sections)
+    
+    return {"report_sections_from_research": completed_report_sections}
+    
+def initiate_final_section_writing(state: ReportState):
+    """
+    리서치가 필요 없는 섹션(서론, 결론)을 write_final_sections로 병렬 전송합니다.
+    
+    이 함수는 add_conditional_edges의 라우팅 함수로 사용됩니다.
+    - 대안: add_node + Command(goto=[Send(...)]) 방식도 가능 (동작 동일, 노드로 보임)
+    
+    Args:
+        state: 모든 섹션과 리서치 컨텍스트가 포함된 현재 상태
+
+    Returns:
+        병렬 섹션 작성을 위한 Send 명령 리스트
+    """
+
+    send_list = []
+    for s in state['sections']:
+        if not s.research:
+            send_list.append(
+                Send("write_final_sections", 
+                    {
+                        "topic": state["topic"],
+                        "section": s,
+                        "report_sections_from_research": state["report_sections_from_research"]
+                    }
+                )
+            )
+            
+    return send_list
+
+async def write_final_sections(state: SectionState, config: RunnableConfig):
+    """리서치가 필요 없는 섹션을 완료된 섹션들을 컨텍스트로 사용하여 작성
+    
+    이 노드는 직접적인 리서치 대신 리서치된 섹션들을 기반으로 
+    서론, 결론이나 요약 같은 섹션을 처리
+
+    Args:
+        state: 완료된 섹션들이 컨텍스트로 포함된 현재 상태
+        config: 작성 모델을 위한 설정
+
+    Returns:
+        새로 작성된 섹션이 포함된 딕셔너리
+
+    """
+
+    # state 값들 가져오기
+    topic = state["topic"]
+    section = state["section"]
+    completed_report_sections = state["report_sections_from_research"]
+    
+    # 설정값 가져오기
+    configurable = Configuration.from_runnable_config(config)
+    
+    # 최종 섹션 작성용 LLM 정의
+    writer_provider = configurable.writer_provider
+    writer_model_name = configurable.writer_model
+    writer_model_kwargs = configurable.writer_model_kwargs or {}
+    writer_model = init_chat_model(model=writer_model_name, model_provider=writer_provider, model_kwargs=writer_model_kwargs) 
+    
+    # 최종 섹션 작성 프롬프트
+    system_instructions = final_section_writer_instructions.format(topic=topic, 
+                                                                   section_name=section.name, 
+                                                                   section_topic=section.description, 
+                                                                   context=completed_report_sections)
+
+    section_content = await writer_model.ainvoke([SystemMessage(content=system_instructions),
+                                           HumanMessage(content="Generate a report section based on the provided sources.")])
+    
+    # 생성된 섹션 콘텐츠를 섹션에 필드에 업데이트 
+    section.content = section_content.content
+
+    return {"completed_sections": [section]}
+
+# 서브 그래프 정의     
+section_bulder = StateGraph(SectionState, output=SectionOutputState)
+section_bulder.add_node("generate_queries", generate_queries)
+section_bulder.add_node("search_web", search_web)
+section_bulder.add_node("write_section", write_section)
+
+# 서브 그래프 엣지 추가
+section_bulder.add_edge(START, "generate_queries")
+section_bulder.add_edge("generate_queries", "search_web")
+section_bulder.add_edge("search_web", "write_section")
+
+# 메인 그래프 정의
+# builder의 각 노드의 모든 출력 결과는 ReportState에 병합됨
+builder = StateGraph(ReportState, input=ReportStateInput, output=ReportStateOutput, config_schema=Configuration)
+builder.add_node("generate_report_plan", generate_report_plan)
+builder.add_node("human_feedback", human_feedback)
+builder.add_node("build_section_with_web_research", section_bulder.compile())
+builder.add_node("gather_completed_sections", gather_completed_sections)
+builder.add_node("write_final_sections", write_final_sections)
 
 
-# # Add edges
-# builder.add_edge(START, "generate_report_plan")
-# builder.add_edge("generate_report_plan", "human_feedback")
+
+# 메인 그래프 엣지 추가
+builder.add_edge(START, "generate_report_plan")
+builder.add_edge("generate_report_plan", "human_feedback")
+builder.add_edge("build_section_with_web_research", "gather_completed_sections")
+builder.add_conditional_edges("gather_completed_sections", initiate_final_section_writing, ["write_final_sections"])
+
+
+
+
 
 # graph = builder.compile()
 

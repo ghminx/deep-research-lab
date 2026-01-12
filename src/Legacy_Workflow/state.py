@@ -37,12 +37,18 @@ class Section(BaseModel):
         description="The content of the section."
     )   
 
-class Sections(BaseModel):
-    sections: List[Section] = Field(
-        
-        description="Sections of the report.",
-    )
 
+class Sections(BaseModel):
+    sections: List[Section] = Field(description="Sections of the report.",)
+    
+
+class Feedback(BaseModel):
+    grade: Literal["pass","fail"] = Field(
+        description="Evaluation result indicating whether the response meets requirements ('pass') or needs revision ('fail')."
+    )
+    follow_up_queries: List[SearchQuery] = Field(
+        description="List of follow-up search queries.",
+    )
 
 
 

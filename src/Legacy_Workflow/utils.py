@@ -8,6 +8,7 @@ from tavily import AsyncTavilyClient
 from langchain.tools import tool, InjectedToolArg
 from langchain_core.runnables import RunnableConfig
 
+from src.Legacy_Workflow.state import Section
 
 def get_search_params(search_api: str, search_api_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -196,3 +197,22 @@ def get_today() -> str:
     """현재 날짜를 "2025-10-10" 형식의 문자열로 반환하는 함수."""
     return datetime.now().strftime("%Y-%m-%d")
 
+
+def format_sections(sections: list[Section]) -> str:
+    """Research 섹션들을 포맷팅"""
+    formatted_str = ""
+    for idx, section in enumerate(sections, 1):
+        formatted_str += f"""
+            {'='*60}
+            Section {idx}: {section.name}
+            {'='*60}
+            Description:
+            {section.description}
+            Requires Research: 
+            {section.research}
+
+            Content:
+            {section.content if section.content else '[Not yet written]'}
+
+"""
+    return formatted_str
