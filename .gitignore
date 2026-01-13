@@ -76,6 +76,7 @@ wheelhouse/
 # =========================
 # LangChain / Deep Research specific
 # =========================
+.langgraph_api/
 langgraph.db
 langgraph.sqlite
 *.sqlite
