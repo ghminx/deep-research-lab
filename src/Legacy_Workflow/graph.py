@@ -2,7 +2,7 @@ from rich import print
 from rich.console import Console
 from rich.panel import Panel
 
-
+from langgraph.checkpoint.memory import MemorySaver
 
 
 import asyncio
@@ -306,7 +306,7 @@ async def search_web(state: SectionState, config: RunnableConfig):
     # 웹 검색 실행 
     web_source = await run_search(search_api, query_list, web_param_filter)
     
-    return {"source_str": web_source, "search_iterations": state["search_iterations"] + 1}
+    return {"source_str": web_source or "", "search_iterations": state["search_iterations"] + 1}
 
 
 async def write_section(state: SectionState, config: RunnableConfig) -> Command[Literal[END, "search_web"]]:
@@ -384,8 +384,13 @@ async def write_section(state: SectionState, config: RunnableConfig) -> Command[
         
         console.print(Panel(f"[green bold]평가 결과: pass[/green bold]"))
         
+        # if configuration.include_source_str:
+        #     update["source_str"] = state["source_str"]
+            
         if configuration.include_source_str:
-            update["source_str"] = state["source_str"]
+            source = state.get("source_str") or ""
+            if source:
+                update["source_str"] = source
             
         return Command(goto=END, update=update)
     
@@ -525,13 +530,13 @@ def compile_final_report(state: ReportState, config: RunnableConfig):
 # from rich import print 
 
 # sections = [
-#     # [순서 1] 서론 (연구 불필요)
-#     Section(
-#         name="서론",
-#         description="AI 기술 동향 보고서의 개요 및 주제 소개",
-#         research=False,
-#         content=''  # <--- 여기가 비어있습니다! (아직 안 합쳤으니까)
-#     ),
+    # [순서 1] 서론 (연구 불필요)
+    # Section(
+    #     name="서론",
+    #     description="AI 기술 동향 보고서의 개요 및 주제 소개",
+    #     research=False,
+    #     content='' 
+    # ),
 
 #     # [순서 2] 생성형 AI의 발전 (연구 필요)
 #     Section(
@@ -618,7 +623,6 @@ builder.add_edge("write_final_sections", "compile_final_report")
 builder.add_edge("compile_final_report", END)
 
 
-
-# graph = builder.compile()
+graph = builder.compile()
 
 
