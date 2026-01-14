@@ -527,68 +527,6 @@ def compile_final_report(state: ReportState, config: RunnableConfig):
     else:
         return {"final_report": all_sections}
 
-# from rich import print 
-
-# sections = [
-    # [순서 1] 서론 (연구 불필요)
-    # Section(
-    #     name="서론",
-    #     description="AI 기술 동향 보고서의 개요 및 주제 소개",
-    #     research=False,
-    #     content='' 
-    # ),
-
-#     # [순서 2] 생성형 AI의 발전 (연구 필요)
-#     Section(
-#         name="생성형 AI의 발전",
-#         description="ChatGPT, Claude 등 생성형 AI 모델의 최신 동향",
-#         research=True,
-#         content=''  # <--- 작업자가 내용은 만들었지만(completed), 여긴 아직 빈칸입니다.
-#     ),
-
-#     # [순서 3] AI 규제 현황 (연구 필요)
-#     Section(
-#         name="AI 규제 현황",
-#         description="각국의 AI 규제 정책 및 법안 현황",
-#         research=True,
-#         content=''  # <--- 역시 비어있습니다.
-#     ),
-
-#     # [순서 4] 결론 (연구 불필요)
-#     Section(
-#         name="결론",
-#         description="주요 발견사항 요약 및 향후 전망",
-#         research=False,
-#         content=''  # <--- 비어있습니다.
-#     )
-# ]
-
-# completed_sections = [
-#     Section(
-#         name="AI 규제 현황",
-#         description="각국의 AI 규제 정책 및 법안 현황",
-#         research=True,
-#         content="## AI 규제 현황\n\nEU는 AI Act를 통해 세계 최초의 포괄적 AI 규제를 시행합니다. 미국은 행정명령을 통해 AI 안전성 기준을 마련했으며, 한국도 AI 기본법 제정을 추진 중입니다.\n\n### Sources\n[1] EU AI Act: https://ec.europa.eu/ai-act"
-#     ),
-#     Section(
-#         name="서론",
-#         description="AI 기술 동향 보고서의 개요 및 주제 소개",
-#         research=False,
-#         content="# AI 기술 동향 보고서\n\n본 보고서는 2024년 AI 기술의 주요 발전 동향을 분석합니다. 생성형 AI의 급격한 발전과 각국의 규제 정책 변화를 중심으로 살펴봅니다."
-#     ),
-#     Section(
-#         name="결론",
-#         description="주요 발견사항 요약 및 향후 전망",
-#         research=False,
-#         content="## 결론\n\n생성형 AI는 빠르게 발전하고 있으며 각국의 규제도 본격화되고 있습니다.\n\n| 분야 | 현황 |\n|------|------|\n| 생성형 AI | GPT-4, Claude 3 출시 |\n| 규제 | EU AI Act 시행 |"
-#     ),
-#     Section(
-#         name="생성형 AI의 발전",
-#         description="ChatGPT, Claude 등 생성형 AI 모델의 최신 동향",
-#         research=True,
-#         content="## 생성형 AI의 발전\n\nOpenAI의 GPT-4와 Anthropic의 Claude 3는 2024년 가장 주목받는 AI 모델입니다. 멀티모달 기능과 추론 능력이 크게 향상되었습니다.\n\n### Sources\n[1] OpenAI Blog: https://openai.com/blog"
-#     )
-# ]
 
   
 # 서브 그래프 정의     
@@ -602,6 +540,7 @@ section_bulder.add_edge(START, "generate_queries")
 section_bulder.add_edge("generate_queries", "search_web")
 section_bulder.add_edge("search_web", "write_section")
 
+
 # 메인 그래프 정의
 # builder의 각 노드의 모든 출력 결과는 ReportState에 병합됨
 builder = StateGraph(ReportState, input=ReportStateInput, output=ReportStateOutput, config_schema=Configuration)
@@ -611,7 +550,6 @@ builder.add_node("build_section_with_web_research", section_bulder.compile())
 builder.add_node("gather_completed_sections", gather_completed_sections)
 builder.add_node("write_final_sections", write_final_sections)
 builder.add_node("compile_final_report", compile_final_report)
-
 
 
 # 메인 그래프 엣지 추가

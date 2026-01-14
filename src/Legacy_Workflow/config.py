@@ -18,20 +18,6 @@ DEFAULT_REPORT_STRUCTURE = """Use this structure to create a report on the user-
    - Provide a concise summary of the report"""
 
 
-DEFAULT_REPORT_STRUCTURE = """이 구조를 사용하여 사용자가 제공한 주제에 대한 보고서를 작성하세요:
-
-1. 서론 (연구 필요 없음)
-   - 주제 영역에 대한 간략한 개요
-
-2. 본문 섹션들:
-   - 각 섹션은 사용자가 제공한 주제의 하위 주제에 초점을 맞춰야 합니다
-   
-3. 결론
-   - 본문 섹션들을 정리하는 1개의 구조적 요소(목록 또는 표)를 목표로 합니다
-   - 보고서의 간결한 요약을 제공합니다"""
-
-
-
 
 class SearchAPI(Enum):
     TAVILY = 'tavily'
