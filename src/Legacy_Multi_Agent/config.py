@@ -26,8 +26,8 @@ class Configuration:
     include_source_str: bool = False         
     
     # Multi Agent 설정 
-    number_of_queries: int = 2 
-    supervisor_model: str = "openai:gpt-5"
+    number_of_queries: int = 2
+    supervisor_model: str = "openai:gpt-5-mini"
     researcher_model: str = "openai:gpt-5-mini"
     ask_for_clarification: bool = False # 사용자에게 명확한 질문 요청 여부
     

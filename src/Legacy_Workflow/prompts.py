@@ -112,6 +112,7 @@ Call the Queries tool
 Today is {today}
 """
 
+# 섹션 작성 프롬프트 
 section_writer_instructions = """Write one section of a research report.
 
 <Task>
@@ -147,6 +148,7 @@ section_writer_instructions = """Write one section of a research report.
 </Final Check>
 """
 
+# 섹션 작성에 필요한 입력값 
 section_writer_inputs=""" 
 <Report topic>
 {topic}
@@ -169,6 +171,7 @@ section_writer_inputs="""
 </Source material>
 """
 
+# 섹션 평가 프롬프트
 section_grader_instructions = """Review a report section relative to the specified topic:
 
 <Report topic>
@@ -201,6 +204,7 @@ follow_up_queries: List[SearchQuery] = Field(
 </format>
 """
 
+# 최종 섹션 작성 프롬프트
 final_section_writer_instructions="""You are an expert technical writer crafting a section that synthesizes information from the rest of the report.
 
 <Report topic>

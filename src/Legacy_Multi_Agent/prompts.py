@@ -42,6 +42,7 @@ Step 7: Call FinishReport tool → Complete
 
 **Step 2: Gather Background Information for Scoping**  
 - REQUIRED: Use available research tools to gather context about the topic
+- Generate {number_of_queries} search queries to explore different aspects of the topic
 - Available tools may include: search tools (like web search), MCP tools (for local files/databases), or other research tools
 - Focus on understanding the breadth and key aspects of the topic
 - Avoid outdated information unless explicitly provided by user

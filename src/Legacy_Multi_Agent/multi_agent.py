@@ -66,7 +66,6 @@ async def get_research_tools(config: RunnableConfig) -> List(BaseTool):
     
     search_tool = get_search_tool(config)
     
-    
     tools = [tool(Section), tool(FinishResearch)]
     
     if search_tool is not None:
@@ -124,12 +123,13 @@ async def supervisor(state: ReportState, config: RunnableConfig):
         )
     
     # Supervisor LLM 프롬프트 
-    system_prompt = SUPERVISOR_INSTRUCTIONS.format(today=get_today())
+    system_prompt = SUPERVISOR_INSTRUCTIONS.format(number_of_queries = configurable.number_of_queries,
+                                                   today=get_today())
 
+    # LLM이 어떤 도구를 사용할지 결정
     response = await llm_with_tools.ainvoke(([{"role": "system", "content": system_prompt}]) + messages)
     
     return {"messages": [response]}    
-    
 
     
 async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Command[Literal["supervisor", "research_team", END]]:
@@ -148,6 +148,13 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
             Command: 다음 노드 지정 (supervisor, research_team, END)
     """
     
+    result = []                      # ToolMessage들을 담을 리스트 (LLM에게 tool 실행 결과 전달용)
+    sections_list = []               # Sections tool이 호출되면 섹션 목록 저장
+    intro_content = None             # Introduction tool 실행 결과
+    conclusion_content = None        # Conclusion tool 실행 결과
+    source_str = ""                  # 검색 결과 문자열 (평가용)
+                        
+    
     configurable  = Configuration.from_runnable_config(config)
     
     # tool list 가져오기 
@@ -161,93 +168,146 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
     for tool in supervisor_tool_list:
         if tool.metadata is not None and tool.metadata['type'] == 'search':
             search_tool_names.add(tool.name)
+            
     
-    # state["messages"][-1] : AIMessage의 tool_calls
-    # for tool_call in state["messages"][-1].tool_calls:
+    # 가장 최신 메세지에 있는 tool_calls를 가져와 도구를 하나씩 실행(LLM을 동작하는게 아님 도구를 실행) 
+    for tool_call in state["messages"][-1].tool_calls:
+        
+        tool = supervisor_tools_by_name[tool_call["name"]]
+        
+        try:
+            observation = await tool.ainvoke(tool_call["args"], config)
+        except NotImplementedError:
+            observation = tool.invoke(tool_call["args"], config)
+    
+        result.append({"role": "tool", 
+                       "content": observation, 
+                       "name": tool_call["name"], 
+                       "tool_call_id": tool_call["id"]})
+        
+        # 각 도구별로 실행 결과를 변수에 저장 (for loop 종료 후 라우팅 결정에 사용)
+        
+        # 질문 도구가 호출된 경우 즉시 사용자에게 질문 반환
+        if tool_call["name"] == "Question":
+            question_obj = cast(Question, observation)   
+            result.append({"role": "assistant", "content": question_obj.question})
+            return Command(goto=END, update={"messages": result})
+        
+        elif tool_call["name"] == "FinishReport":
+            result.append({"role": "user", "content": "Report is finish"})
+            return Command(goto=END, update={"messages": result})
+
+        elif tool_call["name"] == "Sections":
+            sections_list = cast(Sections, observation).sections
+        
+        # 제목에 H1 Heading을 붙임 
+        elif tool_call["name"] == "Introduction":
+            observation = cast(Introduction, observation)
+            if not observation.content.startswith("# "):
+                intro_content = f"# {observation.name} \n\n {observation.content}"
+                
+            else:
+                intro_content = observation.content
+        
+        # 결론은 H2 Heading 붙임
+        elif tool_call["name"] == "Conclusion":
+            observation = cast(Conclusion, observation)
+            if not observation.content.startswith("## "):
+                conclusion_content = f"## {observation.name}\n\n{observation.content}"
+            else:
+                conclusion_content = observation.content        
+
+        elif tool_call["name"] in search_tool_names and configurable.include_source_str:
+            source_str += cast(str, observation)            
+            
+            
+        print(result)
+
 
 
 config = {"configurable": {
                            "search_api": "tavily",
-                           'ask_for_clarification': False,
+                           'ask_for_clarification': True,
                            }}
 
-supervisor_response = {
-    'messages': [
-        HumanMessage(
-            content='MCP에 대해서 알려줘',
-            additional_kwargs={},
-            response_metadata={},
-            id='3d8da9f9-2431-4ab6-a6d2-7a6f86309f45'
-        ),
+state = {
+    "messages": [
+        {"role": "user", "content": "인공지능의 종류에 대해 조사해줘."},
+    
         AIMessage(
             content='',
-            additional_kwargs={'refusal': None},    
+            additional_kwargs={'refusal': None},
             response_metadata={
                 'token_usage': {
-                    'completion_tokens': 544,       
-                    'prompt_tokens': 1042,
-                    'total_tokens': 1586,
-                    'completion_tokens_details': {  
-                        'accepted_prediction_tokens': 0,
+                    'completion_tokens': 398,
+                    'prompt_tokens': 1085,
+                    'total_tokens': 1483,
+                    'completion_tokens_details': {
+                        'accepted_prediction_tokens': 0,        
                         'audio_tokens': 0,
-                        'reasoning_tokens': 448,    
+                        'reasoning_tokens': 256,
                         'rejected_prediction_tokens': 0
                     },
-                    'prompt_tokens_details': {      
+                    'prompt_tokens_details': {
                         'audio_tokens': 0,
-                        'cached_tokens': 1024       
+                        'cached_tokens': 0
                     }
                 },
                 'model_provider': 'openai',
-                'model_name': 'gpt-5-2025-08-07',   
+                'model_name': 'gpt-5-mini-2025-08-07',
                 'system_fingerprint': None,
-                'id':
-                'chatcmpl-CypTvnZeAoXZxWP24yNk22EoGLEnZ',
+                'id': 'chatcmpl-D00YfqnLCVOTNYnt6rWj0A2O7ran8', 
                 'service_tier': 'default',
-                'finish_reason': 'tool_calls',      
+                'finish_reason': 'tool_calls',
                 'logprobs': None
             },
-            id='lc_run--019bc996-02f9-7893-8985-23ea34871988-0',
+            id='lc_run--019bda54-65dd-78a0-976d-3e633861fc06-0',
             tool_calls=[
                 {
-                    'name': 'tavily_search',        
+                    'name': 'Question',
                     'args': {
-                        'queries': [
-                            'MCP meaning overview', 
-                            'Model Context Protocol MCP overview 2024 2025',
-                            'Anthropic MCP protocol tools servers clients',
-                            'OpenAI MCP support',   
-                            'Microsoft Certified    Professional MCP overview',
-                            'MCP manufacturing      chemical polyols MCP acronym',
-                            'MCP in gaming Master   Control Program Tron',
-                            'MCP Korean explanation 모델 컨텍스트 프로토콜'
-                        ],
-                        'include_raw_content': True 
+                        'question': '보고서의 대상과 깊이를 알려주세요. 어떤 수준으로 조사할까요? (예: 초·중·고 학생용, 대학생·일반 성인용, 연구자/전문가용). 또한 중점적으로 다루길    원하는 항목을 하나만 선택해 주세요: 개념적 분류(예: 약한/강한   AI), 알고리즘·기술적 구현(예: 기계학습·딥러닝·심볼릭), 또는 응용야(예: 의료·자율주행·챗봇).'
                     },
-                    'id':
-'call_Vg5dbTQneRKCupVzCaYQImpA',
+                    'id': 'call_uzIMn04koCOZPDeUi6vkLSHw',      
                     'type': 'tool_call'
                 }
             ],
             invalid_tool_calls=[],
             usage_metadata={
-                'input_tokens': 1042,
-                'output_tokens': 544,
-                'total_tokens': 1586,
+                'input_tokens': 1085,
+                'output_tokens': 398,
+                'total_tokens': 1483,
                 'input_token_details': {
                     'audio': 0,
-                    'cache_read': 1024
+                    'cache_read': 0
                 },
                 'output_token_details': {
                     'audio': 0,
-                    'reasoning': 448
+                    'reasoning': 256
                 }
             }
         )
-    ]
+                
+        
+        ],
+    
+    "sections": [],
+    "completed_sections": [],
+    "final_report": "",
+    "source_str": ""
 }
 
+# response = asyncio.run(supervisor(state, config))
 
 
-for tool_call in supervisor_response["messages"][-1].tool_calls:
-    print(tool_call['name'])
+asyncio.run(supervisor_tools(state, config))
+
+
+# import requests 
+
+# response = requests.get(
+#   "https://api.tavily.com/usage",
+#   headers={"Authorization": "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"}
+# )
+
+# response.json()
