@@ -266,6 +266,15 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
 
     return Command(goto="supervisor", update=state_update)
 
+async def supervisor_continue(state: ReportState) -> str:
+    """
+    Supervisor 실행 후 도구 호출을 했는지 여부에 따라 다음 노드를 결정하는 라우팅 함수.
+
+    LLM이 tool_calls를 생성했으면 supervisor_tools로 이동하여 도구를 실행.
+    tool_calls가 없으면 그래프를 종료 (END).
+
+    """
+
 
 config = {"configurable": {
                            "search_api": "tavily",
