@@ -185,16 +185,18 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
                        "name": tool_call["name"], 
                        "tool_call_id": tool_call["id"]})
         
+        
         # 각 도구별로 실행 결과를 변수에 저장 (for loop 종료 후 라우팅 결정에 사용)
         
         # 질문 도구가 호출된 경우 즉시 사용자에게 질문 반환
         if tool_call["name"] == "Question":
             question_obj = cast(Question, observation)   
-            result.append({"role": "assistant", "content": question_obj.question})
+            result.append({"role": "assistant", "content": question_obj.question})    # AI가 사용자에게 질문하기 떄문에 assistant 역할로 추가
+            
             return Command(goto=END, update={"messages": result})
         
         elif tool_call["name"] == "FinishReport":
-            result.append({"role": "user", "content": "Report is finish"})
+            result.append({"role": "user", "content": "Report is finish"})            # 시스템이 LLM에게 지시/안내하는 메세지이므로 user 역할로 추가
             return Command(goto=END, update={"messages": result})
 
         elif tool_call["name"] == "Sections":
@@ -205,7 +207,6 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
             observation = cast(Introduction, observation)
             if not observation.content.startswith("# "):
                 intro_content = f"# {observation.name} \n\n {observation.content}"
-                
             else:
                 intro_content = observation.content
         
@@ -219,33 +220,74 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
 
         elif tool_call["name"] in search_tool_names and configurable.include_source_str:
             source_str += cast(str, observation)            
-            
-            
-        print(result)
+    
+    # 모든 도구 호출 후 다음 Step 결정 
+    if sections_list:
+        # 각 섹션을 Research Agent가 작성해야 하므로 research_team으로 라우팅
+        send_list = []
+        for s in sections_list:
+            send_list.append(Send("research_team", {'section': s}))
+        return Command(goto=send_list, update = {"messages": result})
+    
+    # 서론이 작성되었고 결론이 아직 작성되지 않은 경우 결론 작성 지시
+    elif intro_content:
+        result.append({"role": "user", "content": "Introduction written. Now write a conclusion section."})  # 시스템이 LLM에게 지시/안내하는 메세지이므로 user 역할로 추가
+        
+        state_update = {
+            "final_report": intro_content,
+            "messages": result
+        }
 
+    elif conclusion_content:
+        # 최종 보고서 조립, 모든 섹션을 가져와서 올바른 순서로 결합 (서론 + 본문 섹션 + 결론)
+        intro = state.get("final_report", "")
+        
+        completed = []
+        for s in state["completed_sections"]:
+            completed.append(s.content)
+            
+        body_sections = "\n\n".join(completed)
+        
+        complete_report = f"{intro}\n\n{body_sections}\n\n{conclusion_content}"
+        
+        result.append({"role": "user", "content": "Report is now complete with introduction, body sections, and conclusion."})
+
+        state_update = {
+            "final_report": complete_report,
+            "messages": result,
+        }    
+
+    else:
+        state_update = {"messages": result}
+
+    # 검색 결과 문자열 포함 (평가용)
+    if configurable.include_source_str and source_str:
+        state_update["source_str"] = source_str
+
+    return Command(goto="supervisor", update=state_update)
 
 
 config = {"configurable": {
                            "search_api": "tavily",
-                           'ask_for_clarification': True,
+                           'ask_for_clarification': False,
                            }}
 
 state = {
     "messages": [
         {"role": "user", "content": "인공지능의 종류에 대해 조사해줘."},
-    
+
         AIMessage(
             content='',
             additional_kwargs={'refusal': None},
             response_metadata={
                 'token_usage': {
-                    'completion_tokens': 398,
-                    'prompt_tokens': 1085,
-                    'total_tokens': 1483,
+                    'completion_tokens': 560,
+                    'prompt_tokens': 1061,
+                    'total_tokens': 1621,
                     'completion_tokens_details': {
-                        'accepted_prediction_tokens': 0,        
+                        'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
-                        'reasoning_tokens': 256,
+                        'reasoning_tokens': 448,
                         'rejected_prediction_tokens': 0
                     },
                     'prompt_tokens_details': {
@@ -256,38 +298,40 @@ state = {
                 'model_provider': 'openai',
                 'model_name': 'gpt-5-mini-2025-08-07',
                 'system_fingerprint': None,
-                'id': 'chatcmpl-D00YfqnLCVOTNYnt6rWj0A2O7ran8', 
+                'id': 'chatcmpl-D07kIu1rDqkWBX0eqiSfavOE0lpHb',   
                 'service_tier': 'default',
                 'finish_reason': 'tool_calls',
                 'logprobs': None
             },
-            id='lc_run--019bda54-65dd-78a0-976d-3e633861fc06-0',
+            id='lc_run--019bdbf9-d8a2-7cb1-b369-d25073132a0d-0',  
             tool_calls=[
                 {
-                    'name': 'Question',
+                    'name': 'tavily_search',
                     'args': {
-                        'question': '보고서의 대상과 깊이를 알려주세요. 어떤 수준으로 조사할까요? (예: 초·중·고 학생용, 대학생·일반 성인용, 연구자/전문가용). 또한 중점적으로 다루길    원하는 항목을 하나만 선택해 주세요: 개념적 분류(예: 약한/강한   AI), 알고리즘·기술적 구현(예: 기계학습·딥러닝·심볼릭), 또는 응용야(예: 의료·자율주행·챗봇).'
+                        'queries': [
+                            '인공지능 종류 분류: 좁은 인공지능(ANI), 일반 인공지능(AGI), 초지능(ASI) 차이와 예시 설명', 
+                            '인공지능 접근법 및 기술 종류: 기호주의(규칙기반), 연결주의(신경망), 베이지안, 진화알고리즘,  강화학습, 하이브리드 설명 및 응용 분야'
+                        ]
                     },
-                    'id': 'call_uzIMn04koCOZPDeUi6vkLSHw',      
+                    'id': 'call_4YCjLCBP11yXaxIAsy9WHOP7',        
                     'type': 'tool_call'
                 }
             ],
             invalid_tool_calls=[],
             usage_metadata={
-                'input_tokens': 1085,
-                'output_tokens': 398,
-                'total_tokens': 1483,
+                'input_tokens': 1061,
+                'output_tokens': 560,
+                'total_tokens': 1621,
                 'input_token_details': {
                     'audio': 0,
                     'cache_read': 0
                 },
                 'output_token_details': {
                     'audio': 0,
-                    'reasoning': 256
+                    'reasoning': 448
                 }
             }
         )
-                
         
         ],
     
@@ -300,7 +344,7 @@ state = {
 # response = asyncio.run(supervisor(state, config))
 
 
-asyncio.run(supervisor_tools(state, config))
+print(asyncio.run(supervisor_tools(state, config)))
 
 
 # import requests 
