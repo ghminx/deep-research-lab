@@ -10,6 +10,7 @@ dependencies = [
     "langchain-openai>=1.1.7",
     "langgraph-api>=0.6.31",
     "langgraph-cli[inmem]>=0.4.11",
+    "markitdown>=0.1.4",
     "rich>=14.2.0",
     "tavily>=1.1.0",
 ]

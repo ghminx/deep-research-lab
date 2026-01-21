@@ -1,4 +1,3 @@
-
 import asyncio
 
 from typing import cast, Literal, List
@@ -37,6 +36,7 @@ from src.Legacy_Multi_Agent.state import (
 
 from src.Legacy_Multi_Agent.prompts import (
     SUPERVISOR_INSTRUCTIONS,
+    RESEARCH_INSTRUCTIONS
     
 )
 
@@ -61,7 +61,7 @@ async def get_supervisor_tools(config: RunnableConfig) -> list[BaseTool]:
     return tools
 
 # Researcher 도구 설정
-async def get_research_tools(config: RunnableConfig) -> List(BaseTool):
+async def get_research_tools(config: RunnableConfig) -> list[BaseTool]:
     """tool을 설정하고 리스트를 반환"""
     
     search_tool = get_search_tool(config)
@@ -233,6 +233,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
     elif intro_content:
         result.append({"role": "user", "content": "Introduction written. Now write a conclusion section."})  # 시스템이 LLM에게 지시/안내하는 메세지이므로 user 역할로 추가
         
+        # 상태 업데이트(최초에 final_report에는 빈 문자열이 들어있음)
         state_update = {
             "final_report": intro_content,
             "messages": result
@@ -252,6 +253,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
         
         result.append({"role": "user", "content": "Report is now complete with introduction, body sections, and conclusion."})
 
+        # 최종 보고서 상태 업데이트 (final_report 갱신(기존엔 intro만 들어있음))
         state_update = {
             "final_report": complete_report,
             "messages": result,
@@ -272,88 +274,119 @@ async def supervisor_continue(state: ReportState) -> str:
 
     LLM이 tool_calls를 생성했으면 supervisor_tools로 이동하여 도구를 실행.
     tool_calls가 없으면 그래프를 종료 (END).
-
     """
+    
+    messages = state["messages"]
+    
+    # 마지막 메세지에 도구 호출이 없으면 종료
+    if not messages[-1].tool_calls:
+        return END
+    
+    return "supervisor_tools"
 
+
+async def research_agent(state: SectionState, config: RunnableConfig):
+    """
+    Research Agent LLM이 섹션 연구를 위한 다음 행동을 결정
+
+    - Supervisor로부터 할당받은 특정 섹션을 연구하고 작성하는 연구원 역할
+    - LLM이 도구를 선택하여 다음 행동 결정 (검색, 섹션 작성, 연구 완료)
+    - ReAct 패턴의 Reason 단계 (추론 및 도구 선택)
+
+    Args:
+        state: SectionState
+            - section: supervisor가 할당한 섹션 이름 (예: "AI Safety Overview")
+            - messages: 이전 대화 히스토리 (ToolMessage 포함)
+        config: RunnableConfig (모델 설정 및 API 키)
+
+    Returns:
+        {"messages": [AIMessage(tool_calls=[...])]}
+            - LLM이 결정한 도구 호출 정보
+            - research_agent_should_continue로 전달되어 다음 노드 결정
+    """
+    
+    # 설정 가져오기
+    configurable = Configuration.from_runnable_config(config)
+    research_model = configurable.researcher_model
+    
+    research_llm = init_chat_model(research_model)
+    
+    # tools list 
+    research_tool_list = await get_research_tools(config)
+    
+    # research LLM 프롬프트 
+    system_prompt = RESEARCH_INSTRUCTIONS.format(
+        section_description=state['section'],
+        number_of_queries = configurable.number_of_queries,
+        today=get_today()
+    )
+
+
+    llm_with_tools = research_llm.bind_tools(
+        research_tool_list,
+        parallel_tool_calls=False,
+        tool_choice="any",  # 최소 하나의 도구 실행 
+        )
+    
+    # 첫 실행시 초기 user 메시지 생성
+    messages = state.get("messages", [])
+    if not messages:
+        messages = [{"role": "user", "content": f"Please research and write the section: {state['section']}"}]
+    
+    
+    # LLM이 어떤 도구를 사용할지 결정
+    response = await llm_with_tools.ainvoke([{"role": "system", "content": system_prompt}] + messages)
+
+        
+    return {"messages": [response]}    
+
+
+
+
+state = {
+    # "messages": [{"role": "user", "content": "딥러닝의 역사에 대해서 조사"}],
+    # "messages": ["딥러닝의 역사에 대해서 조사"],
+    "messages": [HumanMessage(content="딥러닝의 역사에 대해서 조사")],
+    "sections": [],  # 섹션 목록
+    "completed_sections": [],  # 완성된 섹션들
+    "final_report": "",  # 최종 보고서
+    "source_str": ""  # 검색 소스
+}
 
 config = {"configurable": {
                            "search_api": "tavily",
-                           'ask_for_clarification': False,
                            }}
 
-state = {
-    "messages": [
-        {"role": "user", "content": "인공지능의 종류에 대해 조사해줘."},
-
-        AIMessage(
-            content='',
-            additional_kwargs={'refusal': None},
-            response_metadata={
-                'token_usage': {
-                    'completion_tokens': 560,
-                    'prompt_tokens': 1061,
-                    'total_tokens': 1621,
-                    'completion_tokens_details': {
-                        'accepted_prediction_tokens': 0,
-                        'audio_tokens': 0,
-                        'reasoning_tokens': 448,
-                        'rejected_prediction_tokens': 0
-                    },
-                    'prompt_tokens_details': {
-                        'audio_tokens': 0,
-                        'cached_tokens': 0
-                    }
-                },
-                'model_provider': 'openai',
-                'model_name': 'gpt-5-mini-2025-08-07',
-                'system_fingerprint': None,
-                'id': 'chatcmpl-D07kIu1rDqkWBX0eqiSfavOE0lpHb',   
-                'service_tier': 'default',
-                'finish_reason': 'tool_calls',
-                'logprobs': None
-            },
-            id='lc_run--019bdbf9-d8a2-7cb1-b369-d25073132a0d-0',  
-            tool_calls=[
-                {
-                    'name': 'tavily_search',
-                    'args': {
-                        'queries': [
-                            '인공지능 종류 분류: 좁은 인공지능(ANI), 일반 인공지능(AGI), 초지능(ASI) 차이와 예시 설명', 
-                            '인공지능 접근법 및 기술 종류: 기호주의(규칙기반), 연결주의(신경망), 베이지안, 진화알고리즘,  강화학습, 하이브리드 설명 및 응용 분야'
-                        ]
-                    },
-                    'id': 'call_4YCjLCBP11yXaxIAsy9WHOP7',        
-                    'type': 'tool_call'
-                }
-            ],
-            invalid_tool_calls=[],
-            usage_metadata={
-                'input_tokens': 1061,
-                'output_tokens': 560,
-                'total_tokens': 1621,
-                'input_token_details': {
-                    'audio': 0,
-                    'cache_read': 0
-                },
-                'output_token_details': {
-                    'audio': 0,
-                    'reasoning': 448
-                }
-            }
-        )
-        
-        ],
-    
-    "sections": [],
-    "completed_sections": [],
-    "final_report": "",
-    "source_str": ""
-}
-
-# response = asyncio.run(supervisor(state, config))
 
 
-print(asyncio.run(supervisor_tools(state, config)))
+asyncio.run(supervisor(state, config))
+
+
+
+
+
+# # Research agent workflow
+# research_builder = StateGraph(SectionState, output=SectionOutputState, config_schema=Configuration)
+# research_builder.add_node("research_agent", research_agent)
+
+# # Edge
+# research_builder.add_edge(START, "research_agent")
+
+# # Supervisor workflow
+# supervisor_builder = StateGraph(ReportState, input=MessagesState, output=ReportStateOutput, config_schema=Configuration)
+# supervisor_builder.add_node("supervisor", supervisor)
+# supervisor_builder.add_node("supervisor_tools", supervisor_tools)
+
+# # Edge
+# supervisor_builder.add_edge(START, "supervisor")
+# supervisor_builder.add_conditional_edges("supervisor", supervisor_continue, ["supervisor_tools", END])  # supervisor의 결과가 tools이 없이 supervisor_tools로 가면 에러가 발생하기 때문에 conditional_edge 사용하여 supervisor_continue를 통해 END로 보냄 
+# supervisor_builder.add_node("research_team", research_builder.compile())
+# supervisor_builder.add_edge("research_team", "supervisor")
+
+
+# app = supervisor_builder.compile()
+
+
 
 
 # import requests 
