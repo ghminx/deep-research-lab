@@ -41,8 +41,6 @@ from src.Legacy_Multi_Agent.prompts import (
 )
 
 
-
-
 # Supervisor 도구 설정
 async def get_supervisor_tools(config: RunnableConfig) -> list[BaseTool]:
     """tool을 설정하고 리스트를 반환"""
@@ -105,7 +103,7 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     supervisor_llm = init_chat_model(supervisor_model)
 
     # 리서치가 완료되었으면 intro/conclusion 작성 신호 추가
-    if state["completed_sections"] and not state['final_report']:
+    if state.get("completed_sections") and not state.get("final_report"):
         research_complete_message = {
             "role": "user", 
             "content": "Research is complete. Now write the introduction and conclusion for the report. Here are the completed main body sections: \n\n" + "\n\n".join([s.content for s in state["completed_sections"]])}
@@ -118,7 +116,7 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     
     llm_with_tools = supervisor_llm.bind_tools(
         supervisor_tool_list,
-        parallel_tool_calls=True,
+        parallel_tool_calls=False,
         tool_choice="any",  # 최소 하나의 도구 실행 
         )
     
@@ -166,7 +164,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
     # search tool 이름 추출 -> {'tavily_search'}
     search_tool_names = set()
     for tool in supervisor_tool_list:
-        if tool.metadata is not None and tool.metadata['type'] == 'search':
+        if tool.metadata is not None and tool.metadata.get("type") == 'search':
             search_tool_names.add(tool.name)
             
     
@@ -309,7 +307,7 @@ async def research_agent(state: SectionState, config: RunnableConfig):
     configurable = Configuration.from_runnable_config(config)
     research_model = configurable.researcher_model
     
-    research_llm = init_chat_model(research_model)
+    research_llm = init_chat_model(model = research_model)
     
     # tools list 
     research_tool_list = await get_research_tools(config)
@@ -321,7 +319,7 @@ async def research_agent(state: SectionState, config: RunnableConfig):
         today=get_today()
     )
 
-
+    # 도구 목록 바인딩 
     llm_with_tools = research_llm.bind_tools(
         research_tool_list,
         parallel_tool_calls=False,
@@ -333,61 +331,187 @@ async def research_agent(state: SectionState, config: RunnableConfig):
     if not messages:
         messages = [{"role": "user", "content": f"Please research and write the section: {state['section']}"}]
     
-    
     # LLM이 어떤 도구를 사용할지 결정
     response = await llm_with_tools.ainvoke([{"role": "system", "content": system_prompt}] + messages)
 
-        
     return {"messages": [response]}    
 
 
+async def research_agent_tools(state: SectionState, config: RunnableConfig):
+    """
+    Research Agent가 선택한 도구를 실행하고 결과를 State에 저장.
+
+    도구별 동작:
+    - Section: 완성된 섹션을 completed_sections에 저장
+    - 검색 도구: 검색 수행, source_str에 결과 누적
+    - FinishResearch: 연구 종료 신호 (실제 동작 없음)
+
+    Returns:
+        dict: State 업데이트 (messages, completed_sections, source_str)
+    """
+    
+    configurable = Configuration.from_runnable_config(config)
+    
+    result = []
+    completed_section = None
+    source_str = ""
+    
+    # 도구 목록 가져오기
+    research_tool_list = await get_research_tools(config)
+    research_tools_by_name = {tool.name: tool for tool in research_tool_list}
+
+    search_tool_names = set()
+    for tool in research_tool_list:
+        if tool.metadata is not None and tool.metadata.get('type') == "search":
+            search_tool_names.add(tool.name)
+            
+    # 가장 최신 메세지에 있는 tool_calls를 가져와 도구를 하나씩 실행(LLM을 동작하는게 아님 도구를 실행) 
+    for tool_call in state["messages"][-1].tool_calls:
+        
+        tool = research_tools_by_name[tool_call['name']]
+        
+        try:
+            observation = await tool.ainvoke(tool_call["args"], config)
+        except NotImplementedError:
+            observation = tool.invoke(tool_call["args"], config)
+        
+         # tool 호출 결과 저장 
+        result.append({"role": "tool", 
+                       "content": observation,
+                       "name": tool_call["name"],
+                       "tool_call_id": tool_call["id"]})
+
+        # 섹션 도구가 호출된 경우 completed_sections에 추가
+        if tool_call["name"] == "Section":
+            completed_section = cast(Section, observation)
+            
+        # 검색 도구 호출 결과 source_str에 누적
+        if tool_call["name"] in search_tool_names and configurable.include_source_str:
+            source_str += cast(str, observation)
+    
+    # 모든 도구 실행 후 다음 결정 
+    state_update = {"messages": result}
+    
+    if completed_section:
+        state_update["completed_sections"] = [completed_section]
+        
+    if configurable.include_source_str and source_str:
+        state_update["source_str"] = source_str
+        
+    return state_update
+
+async def research_continue(state: SectionState) -> str:
+    """
+    Research Agent 실행 후 다음 노드를 결정하는 라우팅 함수.
+
+    LLM이 FinishResearch 도구를 호출했으면 연구 종료 (END).
+    그 외 도구(Section, 검색 등)는 research_agent_tools로 이동하여 실행.
+
+    Returns:
+        str: "research_agent_tools" 또는 END
+    """
+    
+    messages = state["messages"]
+    
+    if messages[-1].tool_calls[0]["name"] == "FinishResearch":
+        return END
+    else:
+        return "research_agent_tools"
+    
 
 
-state = {
-    # "messages": [{"role": "user", "content": "딥러닝의 역사에 대해서 조사"}],
-    # "messages": ["딥러닝의 역사에 대해서 조사"],
-    "messages": [HumanMessage(content="딥러닝의 역사에 대해서 조사")],
-    "sections": [],  # 섹션 목록
-    "completed_sections": [],  # 완성된 섹션들
-    "final_report": "",  # 최종 보고서
-    "source_str": ""  # 검색 소스
-}
+# Research agent workflow
+research_builder = StateGraph(SectionState, output=SectionOutputState, config_schema=Configuration)
+research_builder.add_node("research_agent", research_agent)
+research_builder.add_node("research_agent_tools", research_agent_tools)
 
-config = {"configurable": {
-                           "search_api": "tavily",
-                           }}
+# Edge
+research_builder.add_edge(START, "research_agent")
+research_builder.add_conditional_edges("research_agent", research_continue, ["research_agent_tools", END])
+research_builder.add_edge("research_agent_tools", "research_agent")
 
+# Supervisor workflow
+supervisor_builder = StateGraph(ReportState, input=MessagesState, output=ReportStateOutput, config_schema=Configuration)
+supervisor_builder.add_node("supervisor", supervisor)
+supervisor_builder.add_node("supervisor_tools", supervisor_tools)
+supervisor_builder.add_node("research_team", research_builder.compile())
 
-
-asyncio.run(supervisor(state, config))
-
-
-
-
-
-# # Research agent workflow
-# research_builder = StateGraph(SectionState, output=SectionOutputState, config_schema=Configuration)
-# research_builder.add_node("research_agent", research_agent)
-
-# # Edge
-# research_builder.add_edge(START, "research_agent")
-
-# # Supervisor workflow
-# supervisor_builder = StateGraph(ReportState, input=MessagesState, output=ReportStateOutput, config_schema=Configuration)
-# supervisor_builder.add_node("supervisor", supervisor)
-# supervisor_builder.add_node("supervisor_tools", supervisor_tools)
-
-# # Edge
-# supervisor_builder.add_edge(START, "supervisor")
-# supervisor_builder.add_conditional_edges("supervisor", supervisor_continue, ["supervisor_tools", END])  # supervisor의 결과가 tools이 없이 supervisor_tools로 가면 에러가 발생하기 때문에 conditional_edge 사용하여 supervisor_continue를 통해 END로 보냄 
-# supervisor_builder.add_node("research_team", research_builder.compile())
-# supervisor_builder.add_edge("research_team", "supervisor")
+# Edge
+supervisor_builder.add_edge(START, "supervisor")
+supervisor_builder.add_conditional_edges("supervisor", supervisor_continue, ["supervisor_tools", END])  # supervisor의 결과가 tools이 없이 supervisor_tools로 가면 에러가 발생하기 때문에 conditional_edge 사용하여 supervisor_continue를 통해 END로 보냄 
+supervisor_builder.add_edge("research_team", "supervisor")
 
 
-# app = supervisor_builder.compile()
+graph = supervisor_builder.compile()
+
+
+# config = {"configurable": {
+#                            "search_api": "tavily",
+#                            }}
 
 
 
+
+
+
+# state = {
+#     # "messages": [{"role": "user", "content": "딥러닝의 역사에 대해서 조사"}],
+#     # "messages": ["딥러닝의 역사에 대해서 조사"],
+#     "messages": [HumanMessage(content="딥러닝의 역사에 대해서 조사")],
+#     "sections": [],  # 섹션 목록
+#     "completed_sections": [],  # 완성된 섹션들
+#     "final_report": "",  # 최종 보고서
+#     "source_str": ""  # 검색 소스
+# }
+
+# async def supervisor_think(state: ReportState, config: RunnableConfig):
+#     """
+#     Supervisor가 간단히 다음 행동을 설명하는 단계 (1-2줄)
+#     """
+#     messages = state["messages"]
+#     configurable = Configuration.from_runnable_config(config)
+#     supervisor_model = configurable.supervisor_model
+#     supervisor_llm = init_chat_model(supervisor_model)
+    
+#     if state.get("completed_sections") and not state.get('final_report'):
+#         research_complete_message = {
+#             "role": "user", 
+#             "content": "Research is complete. Now write the introduction and conclusion for the report. Here are the completed main body sections: \n\n" + "\n\n".join([s.content for s in state["completed_sections"]])}
+#         messages = messages + [research_complete_message]
+    
+#     # ✨ 핵심: 아주 짧게만 요청
+#     system_prompt = """You are a research supervisor planning the next action.
+
+# In 1-2 SHORT sentences, state ONLY:
+# - What you will do next
+# - Which tool you will use
+
+# Example: "I will search for information about R&D programs using the search tool."
+
+# Do NOT write the full plan or report. Just state your immediate next action."""
+    
+#     print("\n" + "="*60)
+#     print("🤔 Supervisor")
+#     print("="*60)
+    
+#     thinking = ""
+#     async for chunk in supervisor_llm.astream(
+#         [{"role": "system", "content": system_prompt}] + messages
+#     ):
+#         if chunk.content:
+#             thinking += chunk.content
+#             print(chunk.content, end="", flush=True)
+    
+#     print("\n")
+    
+#     return {"messages": [AIMessage(content=thinking)]}
+
+
+
+
+
+
+# print(asyncio.run(supervisor_think(state, config)))
 
 # import requests 
 

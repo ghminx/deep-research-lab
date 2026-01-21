@@ -55,7 +55,7 @@ class FinishReport(BaseModel):
     
 # Graph State 정의
 class ReportState(MessagesState):
-    sections: List[str]
+    sections: list[str]
     completed_sections: Annotated[list[Section], operator.add]
     final_report: str
     source_str: str
