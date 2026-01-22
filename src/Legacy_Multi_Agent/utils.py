@@ -8,8 +8,10 @@ from tavily import AsyncTavilyClient
 from langchain.tools import tool, InjectedToolArg
 from langchain_core.runnables import RunnableConfig
 
-
 from src.Legacy_Multi_Agent.config import Configuration
+
+from langsmith import traceable
+
 
 def get_search_params(search_api: str, search_api_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -41,7 +43,7 @@ def get_search_params(search_api: str, search_api_config: Optional[Dict[str, Any
     return {k: v for k, v in search_api_config.items() if k in accepted_params}
 
 
-
+@traceable
 async def tavily_search_async(search_queries, 
                               max_results: int = 1, 
                               topic: Literal["general", "news", "finance"] = "general", 

@@ -442,14 +442,7 @@ supervisor_builder.add_conditional_edges("supervisor", supervisor_continue, ["su
 supervisor_builder.add_edge("research_team", "supervisor")
 
 
-graph = supervisor_builder.compile()
-
-
-# config = {"configurable": {
-#                            "search_api": "tavily",
-#                            }}
-
-
+agent = supervisor_builder.compile()
 
 
 

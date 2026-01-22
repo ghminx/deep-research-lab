@@ -13,12 +13,14 @@ class SearchAPI(Enum):
     DUCKDUCKGO = "duckduckgo"
     NONE = "none"
     
+    
 @dataclass(kw_only=True)
 class Configuration:
     """Multi Agent 딥리서치 시스템 기본 설정"""
     
     # 기본 설정 
-    search_api: SearchAPI = SearchAPI.TAVILY
+    # search_api: SearchAPI = SearchAPI.TAVILY
+    search_api: SearchAPI = SearchAPI.TAVILY.name
     search_api_config: Optional[Dict[str, Any]] = None
     
     # 요약 모델 설정 
@@ -26,7 +28,7 @@ class Configuration:
     include_source_str: bool = False         
     
     # Multi Agent 설정 
-    number_of_queries: int = 2
+    number_of_queries: int = 1
     supervisor_model: str = "openai:gpt-5-mini"
     researcher_model: str = "openai:gpt-5-mini"
     ask_for_clarification: bool = False # 사용자에게 명확한 질문 요청 여부
