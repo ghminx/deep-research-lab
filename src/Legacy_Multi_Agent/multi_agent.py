@@ -157,7 +157,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
     
     # tool list 가져오기 
     supervisor_tool_list = await get_supervisor_tools(config)
-    
+
     # tool name으로 도구 매핑 {Section: StructuredTool()}
     supervisor_tools_by_name = {tool.name: tool for tool in supervisor_tool_list}
     
@@ -226,6 +226,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
         for s in sections_list:
             send_list.append(Send("research_team", {'section': s}))
         return Command(goto=send_list, update = {"messages": result})
+    
     
     # 서론이 작성되었고 결론이 아직 작성되지 않은 경우 결론 작성 지시
     elif intro_content:
@@ -446,3 +447,12 @@ agent = supervisor_builder.compile()
 
 
 
+# thread = {"configurable": {
+#                            "search_api": "tavily",
+#                            }}
+
+# state = {
+#     "messages": ['AI Agent에 대해서'],
+# }
+
+# print(asyncio.run(supervisor(state, thread)))

@@ -1,5 +1,6 @@
 """System prompts and prompt templates for the Deep Research agent."""
 
+# 사용자의 질문을 기반으로 연구 범위를 명확히 하기 위한 프롬프트
 clarify_with_user_instructions="""
 These are the messages that have been exchanged so far from the user asking for the report:
 <Messages>
@@ -40,7 +41,7 @@ For the verification message when no clarification is needed:
 - Keep the message concise and professional
 """
 
-
+# 사용자의 메시지를 연구 질문으로 변환하기 위한 프롬프트
 transform_messages_into_research_topic_prompt = """You will be given a set of messages that have been exchanged so far between yourself and the user. 
 Your job is to translate these messages into a more detailed and concrete research question that will be used to guide the research.
 
@@ -76,6 +77,7 @@ Guidelines:
 - If the query is in a specific language, prioritize sources published in that language.
 """
 
+# Research supervisor 시스템 프롬프트
 lead_researcher_prompt = """You are a research supervisor. Your job is to conduct research by calling the "ConductResearch" tool. For context, today's date is {date}.
 
 <Task>
