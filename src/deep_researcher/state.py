@@ -32,7 +32,15 @@ class ResearchQuestion(BaseModel):
         description="연구를 수행하는 데 기준이 될 질문",
     )
 
+class ConductResearch(BaseModel):
+    """특정 주제에 대한 연구를 수행 하는 도구"""
+    research_topic: str = Field(
+        description="The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).",
+    )
 
+class ResearchComplete(BaseModel):
+    """Call this tool to indicate that the research is complete."""
+    
 
 # ====================
 # State Definitions
@@ -56,3 +64,12 @@ class AgentState(MessagesState):
     raw_notes: Annotated[list[str], override_reducer] = []                              # 원본 검색 결과 
     notes: Annotated[list[str], override_reducer] = []                                  # Researcher가 정리한 요약본
     final_report: str
+    
+class SupervisorState(TypedDict):
+    """State for the supervisor that manages research tasks."""
+    
+    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    research_brief: str
+    notes: Annotated[list[str], override_reducer] = []
+    research_iterations: int = 0
+    raw_notes: Annotated[list[str], override_reducer] = []

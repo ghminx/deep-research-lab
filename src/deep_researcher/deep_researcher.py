@@ -22,9 +22,12 @@ from src.deep_researcher.config import Configuration
 from src.deep_researcher.state import (
     ClarifyWithUser,
     ResearchQuestion,
+    ConductResearch,
+    ResearchComplete,
     
     AgentInputState,
     AgentState,
+    SupervisorState
 )
 
 from src.deep_researcher.prompts import (
@@ -38,7 +41,8 @@ from src.deep_researcher.prompts import (
 )
 
 from src.deep_researcher.utils import (
-    get_today
+    get_today,
+    think_tool,
 )
 
 
@@ -109,7 +113,8 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
             update={"messages": [AIMessage(content=response.verification)]})
     
 
-async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor"]]:
+# async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command[Literal["research_supervisor"]]:
+async def write_research_brief(state: AgentState, config: RunnableConfig):
     """사용자 메시지를 분석하여 구조화된 연구 브리핑을 생성하고, Supervisor를 초기화하는 노드
 
     사용자의 메시지를 분석하여 Research Supervisor를 안내할 명확하고 집중된 연구 브리프(계획서)를 생성합니다.
@@ -123,6 +128,7 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     - 초기화된 컨텍스트와 함께 연구 감독자 단계로 진행하기 위한 명령"""
     
     messages = state.get("messages", [])
+    
     configurable = Configuration.from_runnable_config(config)
     
     # 모델 설정 
@@ -141,8 +147,7 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     
     # LLM 호출 
     response = await research_model.ainvoke([HumanMessage(content=brief_prompt)])
-
-
+    
     # Research Berief와 Instructions을 Research Supervisor에 전달
     supervisor_system_prompt = lead_researcher_prompt.format(
         date=get_today(),
@@ -164,9 +169,69 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
         }
     )
     
-      
-# state = {"messages": [HumanMessage(content="딥러닝의 역사")]}
-# response = asyncio.run(clarify_with_user(state, RunnableConfig()))
 
-# response
+async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[Literal["supervisor_tools"]]:
+    """
+    연구 전략을 계획하고 연구자들에게 작업을 위임하는 리드 연구 감독자
+
+    Supervisor는 연구 브리프를 분석하고 연구를 관리 가능한 작업들로 분해하는 방법을 결정
+    전략적 계획을 위해 think_tool을, 하위 연구자에게 작업을 위임하기 위해 ConductResearch를,
+    결과에 만족할 때 ResearchComplete를 사용할 수 있음
+
+    Args:
+        state: 메시지와 연구 컨텍스트가 포함된 현재 supervisor 상태
+        config: 모델 설정이 포함된 런타임 구성
+        
+    Returns:
+        도구 실행을 위해 supervisor_tools로 진행하는 Command
+    """
+    configurable = Configuration.from_runnable_config(config)
+    
+    # 사용가능한 Tool 정의 
+    lead_researcher_tools = [ConductResearch, ResearchComplete, think_tool]
+
+    # 모델 설정
+    research_model_name = configurable.research_model
+    model_max_token = configurable.research_model_max_tokens
+    research_model = (init_chat_model(model=research_model_name, max_tokens=model_max_token)
+                    .bind_tools(lead_researcher_tools)
+                    .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+                    )
+    
+    # Supervisor 응답 생성(도구 호출)
+    supervisor_messages = state.get("supervisor_messages", [])
+    response = await research_model.ainvoke(supervisor_messages)
+    
+    return Command(
+        goto="supervisor_tools",
+        update={"supervisor_messages": [response],
+                "research_iterations": state.get("research_iterations", 0) + 1})
+    
+    
+
+    
+deep_researcher_builder = StateGraph(
+    AgentState, 
+    input=AgentInputState, 
+    config_schema=Configuration
+)
+
+# Add main workflow nodes for the complete research process
+deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
+deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
+
+# Define main workflow edges for sequential execution
+deep_researcher_builder.add_edge(START, "clarify_with_user")                       # Entry point
+
+# Compile the complete deep researcher workflow
+deep_researcher = deep_researcher_builder.compile()
+
+async def run():
+    response = await deep_researcher.ainvoke({"messages": '딥러닝의 역사에 대해서 포괄적으로 조사해줘 추가질문은하지마'}, config=RunnableConfig())
+    
+    return response
+
+if __name__ == "__main__":
+    response = asyncio.run(run())
+
 
