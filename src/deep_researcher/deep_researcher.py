@@ -43,6 +43,7 @@ from src.deep_researcher.prompts import (
 from src.deep_researcher.utils import (
     get_today,
     think_tool,
+    get_notes_from_tool_calls
 )
 
 
@@ -209,21 +210,74 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     
     
 
+async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Command[Literal["supervisor", "__end__"]]:
+    """Supervisor에서 호출한 도구를 실행
+
+    3가지의 도구를 실행함 
     
+    1. think_tool - 대화를 지속하는 전략적 사고
+    2. ConductResearch - 하위 연구원에게 연구 작업을 위임
+    3. ResearchComplete - 연구 단계 완료 신호
+
+    각 도구 호출은 ToolMessage로 변환되어 supervisor에게 다시 전송되며,
+    supervisor가 진행 상황을 추적하고 다음 단계를 계획할 수 있게함
+
+    Args:
+        state: 현재 supervisor 상태
+        config: 런타임 구성 정보
+
+    Returns:
+        다음 supervisor 단계로 돌아가거나 연구 완료로 진행하는 Command
+    """
+
+    # 설정 및 현재 State 추출 
+    configurable = Configuration.from_runnable_config(config)
+    research_iterations = state.get("research_iterations", 0)
+    supervisor_messages = state.get("supervisor_messages", [])
+    recent_message = supervisor_messages[-1]
+    
+    # Research 단계 종료 기준 
+    allowed_iterations = research_iterations > configurable.max_researcher_iterations # 최대 연구 반복 횟수 초과
+    no_tool_calls = not recent_message.tool_calls # 도구 호출이 없음
+    # research_complete = any(
+    #     call.tool_name == "ResearchComplete" 
+    #     for call in recent_message.tool_calls
+    # )
+    
+    # Complete tool 호출 시 
+    research_complete = False 
+    
+    for tool_call in recent_message.tool_calls:
+        if tool_call['tool_name'] == "ResearchComplete":
+            research_complete = True
+            break    
+        
+    # 연구 완료 조건 충족 시 END 상태로 이동
+    if allowed_iterations or no_tool_calls or research_complete:
+        return Command(
+            goto=END,
+            update={
+                "notes": get_notes_from_tool_calls(supervisor_messages),
+                "research_brief": state.get("research_brief", "")
+            }
+        )
+
+
+# 메인 Graph
 deep_researcher_builder = StateGraph(
     AgentState, 
     input=AgentInputState, 
     config_schema=Configuration
 )
 
-# Add main workflow nodes for the complete research process
+# main workflow nodes 정의
 deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
 deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
 
-# Define main workflow edges for sequential execution
+# main workflow edges 정의
 deep_researcher_builder.add_edge(START, "clarify_with_user")                       # Entry point
 
-# Compile the complete deep researcher workflow
+# main workflow Complie
 deep_researcher = deep_researcher_builder.compile()
 
 async def run():
@@ -235,3 +289,4 @@ if __name__ == "__main__":
     response = asyncio.run(run())
 
 
+supervisor_response = asyncio.run(supervisor(response, RunnableConfig()))

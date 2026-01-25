@@ -1,11 +1,15 @@
 from datetime import datetime
 from langchain.tools import tool
+from langchain_core.messages import (
+    MessageLikeRepresentation,
+    filter_messages
+)
 
 def get_today() -> str:
     """현재 날짜를 "2025-10-10" 형식의 문자열로 반환하는 함수."""
     return datetime.now().strftime("%Y-%m-%d")
 
-@tool(description="Strategic reflection tool for research planning")
+# @tool(description="Strategic reflection tool for research planning")
 def think_tool(reflection: str) -> str:
     """Tool for strategic reflection on research progress and decision-making.
 
@@ -32,3 +36,8 @@ def think_tool(reflection: str) -> str:
     """
     return f"Reflection recorded: {reflection}"
 
+
+
+def get_notes_from_tool_calls(messages: list[MessageLikeRepresentation]):
+    """도구 호출 메세지에서 노트 추출"""
+    return [tool_msg.content for tool_msg in filter_messages(messages, include_types="tool")]
