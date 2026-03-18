@@ -177,7 +177,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig) -> Comman
             observation = await tool.ainvoke(tool_call["args"], config)
         except NotImplementedError:
             observation = tool.invoke(tool_call["args"], config)
-    
+
         result.append({"role": "tool", 
                        "content": observation, 
                        "name": tool_call["name"], 
@@ -455,4 +455,20 @@ agent = supervisor_builder.compile()
 #     "messages": ['AI Agent에 대해서'],
 # }
 
-# print(asyncio.run(supervisor(state, thread)))
+
+# async def run():
+#     user =  'AI Agent에 대해서'
+
+#     response = await agent.ainvoke({"messages": user}, config=RunnableConfig())
+    
+#     return response
+
+# if __name__ == "__main__":
+#     import time 
+    
+#     start = time.time()
+#     response = asyncio.run(run())
+#     end = time.time()
+#     print(f"Execution Time: {end - start} seconds")
+#     r
+    

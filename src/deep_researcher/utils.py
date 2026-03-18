@@ -9,7 +9,7 @@ def get_today() -> str:
     """현재 날짜를 "2025-10-10" 형식의 문자열로 반환하는 함수."""
     return datetime.now().strftime("%Y-%m-%d")
 
-# @tool(description="Strategic reflection tool for research planning")
+@tool(description="Strategic reflection tool for research planning")
 def think_tool(reflection: str) -> str:
     """Tool for strategic reflection on research progress and decision-making.
 
